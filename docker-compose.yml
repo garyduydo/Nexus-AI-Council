@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  # Ollama (Local LLM)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+  # AI Agent Backend
+  agent:
+    build: .
+    container_name: ai-agent
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./agent_memory:/app/agent_memory
+      - ./agent_logs:/app/agent_logs
+      - ./agent_data:/app/agent_data
+    environment:
+      - AGENT_MODEL=llama3.1:8b
+      - AGENT_TEMP=0.7
+    restart: unless-stopped
+    depends_on:
+      - ollama
+
+volumes:
+  ollama-data:

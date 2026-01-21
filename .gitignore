@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+
+# Node.js
+node_modules/
+build/
+
+# IDE
+.vscode/
+
+# Agent specific directories
+agent_cache/
+agent_data/
+agent_logs/
+agent_memory/
+agent_secure/
+agent_workspace/

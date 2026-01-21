@@ -1,0 +1,410 @@
+# ==============================================================================
+# DOCKERFILE - AI Agent Backend
+# ==============================================================================
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p agent_memory agent_logs agent_data agent_secure agent_cache
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/ || exit 1
+
+# Run the application
+CMD ["python", "api_server.py"]
+
+
+# ==============================================================================
+# DOCKER-COMPOSE.YML - Complete Stack
+# ==============================================================================
+# Save this as: docker-compose.yml
+
+version: '3.8'
+
+services:
+  # AI Agent Backend
+  agent:
+    build: .
+    container_name: ai-agent
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./agent_memory:/app/agent_memory
+      - ./agent_logs:/app/agent_logs
+      - ./agent_data:/app/agent_data
+      - ./agent_secure:/app/agent_secure
+    environment:
+      - AGENT_MODEL=llama3.1:8b
+      - AGENT_TEMP=0.7
+      - AGENT_MAX_ITER=15
+    restart: unless-stopped
+    networks:
+      - agent-network
+    depends_on:
+      - ollama
+
+  # Ollama Service (local LLM)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - agent-network
+    # Pull model on startup
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 5 && ollama pull llama3.1:8b && wait"]
+
+  # Redis (optional - for caching/sessions)
+  redis:
+    image: redis:7-alpine
+    container_name: agent-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - agent-network
+
+  # PostgreSQL (optional - for advanced persistence)
+  postgres:
+    image: postgres:15-alpine
+    container_name: agent-db
+    environment:
+      POSTGRES_DB: agent_db
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: changeme123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - agent-network
+
+  # Nginx (optional - reverse proxy)
+  nginx:
+    image: nginx:alpine
+    container_name: agent-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/build:/usr/share/nginx/html:ro
+    restart: unless-stopped
+    networks:
+      - agent-network
+    depends_on:
+      - agent
+
+volumes:
+  ollama-data:
+  redis-data:
+  postgres-data:
+
+networks:
+  agent-network:
+    driver: bridge
+
+
+# ==============================================================================
+# REQUIREMENTS.TXT
+# ==============================================================================
+# Save this as: requirements.txt
+
+# Core
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+websockets==12.0
+python-dotenv==1.0.0
+
+# LLM & AI
+langchain-ollama==0.0.1
+langchain-core==0.1.3
+langchain-community==0.0.10
+langchain-huggingface==0.0.1
+
+# Vector Store & Embeddings
+chromadb==0.4.18
+sentence-transformers==2.2.2
+
+# Web Tools
+duckduckgo-search==4.1.0
+requests==2.31.0
+beautifulsoup4==4.12.2
+lxml==4.9.3
+aiohttp==3.9.1
+
+# System Tools
+pyautogui==0.9.54
+pillow==10.1.0
+psutil==5.9.6
+
+# Security
+cryptography==41.0.7
+pydantic==2.5.0
+
+# Voice (optional)
+SpeechRecognition==3.10.0
+pyttsx3==2.90
+
+# Caching
+diskcache==5.6.3
+
+# Database (optional)
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+redis==5.0.1
+
+
+# ==============================================================================
+# NGINX.CONF - Reverse Proxy Configuration
+# ==============================================================================
+# Save this as: nginx.conf
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream backend {
+        server agent:8000;
+    }
+
+    server {
+        listen 80;
+        server_name localhost;
+
+        # Frontend static files
+        location / {
+            root /usr/share/nginx/html;
+            try_files $uri $uri/ /index.html;
+        }
+
+        # API proxy
+        location /api/ {
+            proxy_pass http://backend/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+
+        # WebSocket proxy
+        location /ws {
+            proxy_pass http://backend/ws;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "Upgrade";
+            proxy_set_header Host $host;
+            proxy_read_timeout 86400;
+        }
+    }
+}
+
+
+# ==============================================================================
+# .env - Environment Configuration
+# ==============================================================================
+# Save this as: .env
+
+# Agent Configuration
+AGENT_MODEL=llama3.1:8b
+AGENT_TEMP=0.7
+AGENT_MAX_ITER=15
+
+# Database (if using PostgreSQL)
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=agent_db
+DB_USER=agent
+DB_PASSWORD=changeme123
+
+# Redis (if using)
+REDIS_HOST=redis
+REDIS_PORT=6379
+
+# API Keys (for external models - optional)
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+GOOGLE_API_KEY=
+
+# Security
+SECRET_KEY=your-secret-key-change-this
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:80
+
+
+# ==============================================================================
+# DEPLOYMENT INSTRUCTIONS
+# ==============================================================================
+
+QUICKSTART GUIDE:
+=================
+
+1. SETUP FILES:
+   - Save your original agent code as: agent_code.py
+   - Save the FastAPI backend as: api_server.py
+   - Save the Dockerfile above as: Dockerfile
+   - Save docker-compose.yml above
+   - Save requirements.txt above
+   - Save nginx.conf above (optional)
+   - Save .env above
+
+2. INSTALL DOCKER:
+   - Windows/Mac: https://www.docker.com/products/docker-desktop
+   - Linux: sudo apt install docker.io docker-compose
+
+3. START SERVICES:
+   docker-compose up -d
+
+4. CHECK STATUS:
+   docker-compose ps
+   docker-compose logs -f agent
+
+5. ACCESS:
+   - API: http://localhost:8000
+   - API Docs: http://localhost:8000/docs
+   - Frontend: http://localhost:3000 (if using React)
+
+6. STOP SERVICES:
+   docker-compose down
+
+7. VIEW LOGS:
+   docker-compose logs -f
+
+MANUAL DEPLOYMENT (without Docker):
+====================================
+
+1. Install dependencies:
+   pip install -r requirements.txt
+
+2. Start Ollama:
+   ollama serve
+
+3. Pull model:
+   ollama pull llama3.1:8b
+
+4. Start backend:
+   python api_server.py
+
+5. Access API:
+   http://localhost:8000
+
+PRODUCTION DEPLOYMENT:
+======================
+
+1. USE HTTPS:
+   - Get SSL cert (Let's Encrypt)
+   - Configure nginx with SSL
+   - Update docker-compose ports
+
+2. SECURITY:
+   - Change all default passwords in .env
+   - Set SECRET_KEY to random string
+   - Configure firewall rules
+   - Enable authentication
+
+3. MONITORING:
+   - Add Prometheus/Grafana
+   - Configure log aggregation
+   - Set up alerts
+
+4. BACKUP:
+   docker-compose exec agent tar -czf backup.tar.gz agent_memory agent_secure
+   
+5. SCALING:
+   docker-compose up --scale agent=3
+
+TROUBLESHOOTING:
+================
+
+Issue: Ollama not connecting
+Fix: Check ollama logs: docker-compose logs ollama
+
+Issue: Port already in use
+Fix: Change ports in docker-compose.yml
+
+Issue: Out of memory
+Fix: Increase Docker memory limit in Docker Desktop settings
+
+Issue: Model not found
+Fix: docker-compose exec ollama ollama pull llama3.1:8b
+
+CLOUD DEPLOYMENT:
+=================
+
+AWS:
+- EC2 instance (t3.large minimum)
+- ECS/EKS for container orchestration
+- S3 for file storage
+- RDS for PostgreSQL
+
+Google Cloud:
+- Compute Engine
+- Cloud Run for containers
+- Cloud Storage
+- Cloud SQL
+
+Azure:
+- Virtual Machines
+- Container Instances
+- Blob Storage
+- Azure Database
+
+DigitalOcean:
+- Droplet (4GB RAM minimum)
+- Managed Kubernetes
+- Spaces for storage
+- Managed Database
+
+COST ESTIMATES (Monthly):
+=========================
+
+Local (your computer): $0
+- Uses local resources
+- No cloud costs
+
+VPS Deployment: $20-50
+- DigitalOcean/Linode droplet
+- 4GB RAM, 2 vCPU
+- Local Ollama models
+
+Cloud with APIs: $50-200
+- Small VM for backend
+- API calls to OpenAI/Claude
+- Pay per use
+
+Full Cloud Setup: $100-500
+- Load balancer
+- Auto-scaling
+- Managed database
+- Full monitoring
