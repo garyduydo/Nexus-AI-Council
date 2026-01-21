@@ -37,3 +37,6 @@ This document outlines potential current issues identified within the Nexus AI p
 
 ## 8. Local Development Environment
 - **Ollama Setup for Backend Development:** The requirement to run Ollama separately for backend development, while documented, adds an extra step that could be streamlined for an improved developer experience.
+
+## 9. General AI Concerns
+- **Using OpenRouter** Currently, using this often hits the OpenRouter's models rate limits quickly, with an expected 1-5 requests per day

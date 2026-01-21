@@ -248,6 +248,120 @@ Nexus AI will be a standalone application accessible via a web interface, design
     AGENT_TEMP=0.7
     ```
 
+**Below are the models that I have used and are how I have set the fallback mechanic**
+    USE_BACKUP_ONLY=true
+    ENABLE_QUALITY_FALLBACK=false
+
+    # AI Agent Configuration
+    AGENT_MODEL=llama3.1:8b
+    AGENT_TEMP=0.7
+    AGENT_MAX_ITER=15
+    # ============================================================================
+    # PRIMARY COUNCIL - OpenRouter Free Tier (Latest Models)
+    # ============================================================================
+
+    # Strategist - Fast reasoning models
+    PANEL_STRATEGIST=xiaomi/mimo-v2-flash:free,nvidia/nemotron-nano-9b-v2:free
+
+    # Librarian - Large knowledge models
+    PANEL_LIBRARIAN=openai/gpt-oss-120b:free,qwen/qwen3-next-80b-a3b-instruct:free
+
+    # Architect - Best coding models  
+    PANEL_ARCHITECT=qwen/qwen3-coder:free,mistralai/devstral-2512:free
+
+    # Observer - Analysis models
+    PANEL_OBSERVER=google/gemma-3n-e4b-it:free,nvidia/nemotron-3-nano-30b-a3b:free
+
+    # Auditor - Verification models
+    PANEL_AUDITOR=nvidia/nemotron-nano-9b-v2:free,google/gemma-3n-e2b-it:free
+
+    # Chairperson - High-reasoning synthesis
+    CHAIRPERSON_MODEL=tngtech/deepseek-r1t2-chimera:free
+
+    # ============================================================================
+    # BACKUP COUNCIL - FREE TIER GEMINI MODELS ONLY
+    # ============================================================================
+
+    # Use gemini-2.5-flash (FREE) instead of gemini-2.5-pro (PAID)
+    BACKUP_PANEL_STRATEGIST=groq:llama-3.3-70b-versatile,gemini:gemini-2.5-flash,ollama:llama3.1:8b
+
+    # gemini-2.5-flash is FREE, gemini-2.5-pro requires payment
+    BACKUP_PANEL_LIBRARIAN=groq:llama-3.3-70b-versatile,gemini:gemini-2.5-flash,ollama:llama3.1:8b
+
+    BACKUP_PANEL_ARCHITECT=groq:llama-3.3-70b-versatile,gemini:gemini-2.5-flash,ollama:deepseek-coder:6.7b
+
+    BACKUP_PANEL_OBSERVER=groq:llama-3.3-70b-versatile,gemini:gemini-2.5-flash,ollama:llama3.1:8b
+
+    BACKUP_PANEL_AUDITOR=groq:llama-3.1-8b-instant,gemini:gemini-2.5-flash,ollama:llama3.1:8b
+
+    # IMPORTANT: Change from gemini-2.5-pro to gemini-2.5-flash
+    BACKUP_CHAIRPERSON_MODEL=gemini:gemini-2.5-flash
+
+    # ============================================================================
+    # FALLBACK BEHAVIOR
+    # ============================================================================
+
+    # Automatically switch to backup when primary fails
+    ENABLE_BACKUP_COUNCIL=true
+
+    # Number of failures before switching (1 = immediate fallback)
+    FAILURES_BEFORE_BACKUP=1
+
+    # Seconds to wait before retrying primary after failure
+    PRIMARY_COOLDOWN=60
+
+    # Display which council is being used in responses
+    SHOW_COUNCIL_MODE=false
+
+    # ============================================================================
+    # RATE LIMITS
+    # ============================================================================
+
+    # OpenRouter free tier limits
+    OPENROUTER_RPM=20
+
+    # Groq limits
+    GROQ_RPM=30
+    GROQ_RPD=14400
+
+    # Gemini limits  
+    GEMINI_RPM=15
+    GEMINI_RPD=1500
+
+    # ============================================================================
+    # DUAL CONSENSUS SETTINGS (Primary vs Backup)
+    # ============================================================================
+
+
+    # PRIMARY COUNCIL (OpenRouter - less reliable, needs higher thresholds)
+    PRIMARY_ROLE_GAP=50              # Higher gap needed (less reliable models)
+    PRIMARY_MIN_CONFIDENCE=75        # Higher confidence required
+    PRIMARY_ENABLE_RETRIES=true      # Enable retries for failed calls
+    PRIMARY_MAX_RETRIES=2            # Number of retries
+
+
+    # BACKUP COUNCIL (Groq/Gemini/Ollama - more reliable, lower thresholds)
+    BACKUP_ROLE_GAP=40               # Lower gap acceptable (more reliable)
+    BACKUP_MIN_CONFIDENCE=70         # Standard confidence
+    BACKUP_ENABLE_RETRIES=false      # Less retries needed
+    BACKUP_MAX_RETRIES=1
+
+
+    # CONSENSUS QUALITY TRACKING
+    TRACK_CONSENSUS_SCORES=true      # Track consensus quality over time
+    MIN_ACCEPTABLE_CONSENSUS=250     # Minimum average consensus score
+
+
+    # AUTOMATIC FALLBACK
+    AUTO_FALLBACK_ON_LOW_CONSENSUS=true   # Fallback if primary consensus too low
+    LOW_CONSENSUS_THRESHOLD=280           # Trigger fallback below this score
+
+
+    # DISAGREEMENT HANDLING
+    DETECT_ROLE_CONFLICTS=true
+    FLAG_HIGH_SEVERITY_CONFLICTS=true     # Flag severe disagreements
+
+    
 3.  **Build and run with Docker Compose:**
     ```bash
     docker-compose up --build
