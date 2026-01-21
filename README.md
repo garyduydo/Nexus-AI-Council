@@ -248,7 +248,9 @@ Nexus AI will be a standalone application accessible via a web interface, design
     AGENT_TEMP=0.7
     ```
 
-**Below are the models that I have used and are how I have set the fallback mechanic**
+**Below are the models that I have used and are how I have set the fallback mechanic:**
+    
+    
     # MY SETUP
     USE_BACKUP_ONLY=true
     ENABLE_QUALITY_FALLBACK=false
