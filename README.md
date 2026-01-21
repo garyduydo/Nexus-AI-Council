@@ -249,6 +249,7 @@ Nexus AI will be a standalone application accessible via a web interface, design
     ```
 
 **Below are the models that I have used and are how I have set the fallback mechanic**
+    # MY SETUP
     USE_BACKUP_ONLY=true
     ENABLE_QUALITY_FALLBACK=false
 
@@ -361,7 +362,7 @@ Nexus AI will be a standalone application accessible via a web interface, design
     DETECT_ROLE_CONFLICTS=true
     FLAG_HIGH_SEVERITY_CONFLICTS=true     # Flag severe disagreements
 
-    
+
 3.  **Build and run with Docker Compose:**
     ```bash
     docker-compose up --build
