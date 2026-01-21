@@ -65,15 +65,7 @@ Nexus AI will be a standalone application accessible via a web interface, design
 - **BR-NFR-007: User Experience (UX):** The frontend shall be intuitive, responsive, and provide a seamless user experience.
 - **BR-NFR-008: Observability:** The system shall provide comprehensive logging and monitoring capabilities for debugging and operational insights.
 
-## 5. Stakeholders
-
-- Product Manager
-- Development Team (Backend, Frontend, AI/ML Engineers)
-- QA/Testing Team
-- Security Team
-- End Users
-
-## 6. Success Metrics
+## 5. Success Metrics
 
 - Increase in average daily active users.
 - High user satisfaction scores (e.g., NPS).
@@ -82,7 +74,7 @@ Nexus AI will be a standalone application accessible via a web interface, design
 - High rate of successful task completions by the AI agent.
 - Positive feedback from developer community on extensibility.
 
-## 7. Assumptions & Constraints
+## 6. Assumptions & Constraints
 
 ### Assumptions:
 - Users have basic technical proficiency to set up Docker or run Python scripts.

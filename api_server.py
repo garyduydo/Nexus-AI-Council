@@ -22,16 +22,13 @@ from pathlib import Path
 import aiofiles
 import traceback
 
-# WINDOWS UTF-8 FIX - Must be at the top before any logging
 if platform.system() == "Windows":
-    # Fix stdout/stderr encoding
     import io
     if hasattr(sys.stdout, 'buffer'):
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
     if hasattr(sys.stderr, 'buffer'):
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
     
-    # Set environment for subprocesses
     os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -47,24 +44,20 @@ except ImportError as e:
 class HealthCheckFilter(logging.Filter):
     """Filter out health check endpoint logs"""
     def filter(self, record: logging.LogRecord) -> bool:
-        # Filter out /health and /stats endpoints
         return not any(path in record.getMessage() for path in [
             "GET /health",
             "GET /stats",
             "GET /favicon.ico"
         ])
 
-# Apply filter to uvicorn access logger
 logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
 
-# FastAPI app
 app = FastAPI(
     title="Nexus AI - Production API",
     version="1.0.0",
     description="Production-ready AI agent with file upload, voice, and streaming"
 )
 
-# CORS - Allow all origins for development, restrict in production
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 
 app.add_middleware(
@@ -75,7 +68,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global state
 agent = None
 start_time = time.time()
 message_count = 0
@@ -96,17 +88,17 @@ class ConnectionManager:
         self.active_connections: List[WebSocket] = []
         self.connection_times: Dict[WebSocket, float] = {}
         self.timeout_seconds = 3600
-        self._lock = asyncio.Lock()  # FIX: Use async lock
+        self._lock = asyncio.Lock()  
     
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
-        async with self._lock:  # FIX: Protect with lock
+        async with self._lock:  
             self.active_connections.append(websocket)
             self.connection_times[websocket] = time.time()
         print(f" [SUCCESS] Client connected (total: {len(self.active_connections)})")
     
     async def disconnect(self, websocket: WebSocket):
-        async with self._lock:  # FIX: Protect with lock
+        async with self._lock:  
             if websocket in self.active_connections:
                 self.active_connections.remove(websocket)
             if websocket in self.connection_times:
@@ -117,7 +109,6 @@ class ConnectionManager:
         now = time.time()
         to_remove = []
         
-        # FIX: Create snapshot to avoid modification during iteration
         async with self._lock:
             connection_snapshot = list(self.connection_times.items())
         
@@ -135,7 +126,6 @@ class ConnectionManager:
         if to_remove:
             logger.info(f" Cleaned up {len(to_remove)} stale connections")
 
-# Replace global active_connections with manager
 manager = ConnectionManager()
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -153,13 +143,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         }
     
     async def dispatch(self, request: Request, call_next):
-        # Skip rate limiting for excluded paths
         if request.url.path in self.excluded_paths:
             return await call_next(request)
         
-        # FIX: Periodic cleanup to prevent memory leak
         now = time.time()
-        if now - self.last_cleanup > 300:  # Every 5 minutes
+        if now - self.last_cleanup > 300:  
             self._cleanup_old_ips()
             self.last_cleanup = now
         
@@ -169,20 +157,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if client_ip not in self.request_times:
             self.request_times[client_ip] = []
         
-        # Clean old requests
         self.request_times[client_ip] = [
             t for t in self.request_times[client_ip] 
             if t > minute_ago
         ]
         
-        # Check limit
         if len(self.request_times[client_ip]) >= self.requests_per_minute:
             return JSONResponse(
                 status_code=429,
                 content={"error": "Rate limit exceeded"}
             )
         
-        # Record request
         self.request_times[client_ip].append(now)
         
         response = await call_next(request)
@@ -194,7 +179,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         to_remove = []
         
         for ip, times in self.request_times.items():
-            if not times or max(times) < now - 300:  # 5 min idle
+            if not times or max(times) < now - 300:  
                 to_remove.append(ip)
         
         for ip in to_remove:
@@ -203,7 +188,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if to_remove:
             logger.info(f"Cleaned up {len(to_remove)} inactive IPs")
 
-# Add middleware to app
 app.add_middleware(RateLimitMiddleware, requests_per_minute=60)
 
 # ============================================================================
@@ -214,19 +198,16 @@ app.add_middleware(RateLimitMiddleware, requests_per_minute=60)
 async def upload_file(file: UploadFile = File(...)):
     """Handle file uploads - PATCHED"""
     try:
-        # FIX: Sanitize filename
         safe_filename = re.sub(r'[^a-zA-Z0-9._-]', '_', file.filename)
         if safe_filename != file.filename:
             logger.warning(f" Sanitized filename: {file.filename} -> {safe_filename}")
         
-        # Validate file size
         MAX_SIZE = 10 * 1024 * 1024
         content = await file.read()
         
         if len(content) > MAX_SIZE:
             raise HTTPException(400, "File too large (max 10MB)")
         
-        # Validate file type
         allowed_types = {
             'text/plain', 'text/markdown', 'text/csv',
             'application/json', 'application/pdf',
@@ -236,10 +217,8 @@ async def upload_file(file: UploadFile = File(...)):
         if file.content_type not in allowed_types:
             raise HTTPException(400, f"File type not supported: {file.content_type}")
         
-        # Save file
         file_path = Path(AgentConfig.DATA_DIR) / safe_filename
         
-        # FIX: Prevent overwrite
         if file_path.exists():
             base = file_path.stem
             ext = file_path.suffix
@@ -251,7 +230,6 @@ async def upload_file(file: UploadFile = File(...)):
         async with aiofiles.open(file_path, 'wb') as f:
             await f.write(content)
         
-        # Read preview
         try:
             async with aiofiles.open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 file_content = await f.read(5000)
@@ -274,14 +252,12 @@ async def upload_file(file: UploadFile = File(...)):
         logger.error(f" Upload failed: {e}")
         raise HTTPException(500, f"Upload failed: {str(e)}")
 
-# Update websocket endpoint
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint - PATCHED"""
     await manager.connect(websocket)
     
     try:
-        # Send welcome
         await safe_send_json(websocket, {
             "type": "connection",
             "status": "connected",
@@ -290,13 +266,11 @@ async def websocket_endpoint(websocket: WebSocket):
         
         while True:
             try:
-                # FIX: Add timeout to receive
                 data = await asyncio.wait_for(
                     websocket.receive_text(),
-                    timeout=300.0  # 5 min
+                    timeout=300.0 
                 )
             except asyncio.TimeoutError:
-                # Send keepalive
                 if not await safe_send_json(websocket, {"type": "keepalive"}):
                     break
                 continue
@@ -325,7 +299,6 @@ async def websocket_endpoint(websocket: WebSocket):
             if not user_message.strip():
                 continue
             
-            # Process message with error handling
             try:
                 await intelligent_streaming(user_message, websocket)
             except Exception as e:
@@ -344,7 +317,6 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         await manager.disconnect(websocket)
 
-# Smart analysis functions
 async def should_search_web(query: str) -> bool:
     """Determine if query needs web search"""
     current_indicators = ['today', 'now', 'current', 'latest', 'recent', 'news', 'weather']
@@ -371,7 +343,6 @@ async def safe_send_json(websocket: WebSocket, data: dict) -> bool:
 async def smart_web_search(query: str, websocket: WebSocket) -> str:
     """Intelligent web search - PATCHED"""
     
-    # FIX: Check if connection is alive
     if not await safe_send_json(websocket, {
         "type": "response_chunk",
         "content": "*[SEARCH] Searching the web...*\n\n"
@@ -402,12 +373,11 @@ async def smart_web_search(query: str, websocket: WebSocket) -> str:
     if not urls:
         return comprehensive_info
     
-    # FIX: Check connection before fetching
     if not await safe_send_json(websocket, {
         "type": "response_chunk",
         "content": "*Reading top sources...*\n\n"
     }):
-        return comprehensive_info  # Return what we have
+        return comprehensive_info  
     
     async def fetch_url(url: str, index: int):
         try:
@@ -465,7 +435,6 @@ async def intelligent_streaming(user_message: str, websocket: WebSocket):
     start = time.time()
     
     try:
-        # Validate input
         if len(user_message) > 10000:
             await safe_send_json(websocket, {
                 "type": "error",
@@ -473,20 +442,16 @@ async def intelligent_streaming(user_message: str, websocket: WebSocket):
             })
             return
         
-        # Add to memory
         agent.memory.add_conversation("user", user_message)
         
-        # Get context
         context_msgs = agent.memory.get_recent_context(6)
         context_str = "\n".join([f"{m['role']}: {m['content']}" for m in context_msgs])
         
-        # Choose mode
         if agent.use_council:
             await stream_with_council(user_message, context_str, websocket)
         else:
             await stream_with_ollama(user_message, websocket)
         
-        # Update stats
         message_count += 1
         response_times.append(time.time() - start)
         
@@ -518,11 +483,10 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
     current_context = context_str
     tool_history = []
     has_sent_final_response = False
-    completion_sent = False  # ✅ NEW: Track if we've sent completion
+    completion_sent = False  
     
     try:
         for iteration in range(max_iterations):
-            # Only show "Consulting" on first iteration
             if iteration == 0:
                 if not await safe_send_json(websocket, {
                     "type": "response_chunk", 
@@ -536,7 +500,6 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                     timeout=120.0
                 )
                 
-                # Check if response is actually an error string
                 if not full_response or is_council_failure(full_response):
                     logger.error(f"Council returned failure: {full_response}")
                     
@@ -544,7 +507,7 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                         error_msg = full_response if full_response else "Council failed to respond"
                         await safe_send_json(websocket, {
                             "type": "response_chunk",
-                            "content": f"\n\n⚠️ {error_msg}\n\n"
+                            "content": f"\n\n {error_msg}\n\n"
                         })
                         
                         if agent.orchestrator.backup_available:
@@ -559,7 +522,6 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                         
                         has_sent_final_response = True
                     
-                    # ✅ FIX: Send completion on failure
                     if not completion_sent:
                         await safe_send_json(websocket, {
                             "type": "response_complete",
@@ -573,7 +535,6 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                 logger.error(f"Council timeout after {iteration + 1} iterations")
                 
                 if not has_sent_final_response:
-                    # ✅ FIX: More helpful timeout message
                     timeout_msg = (
                         "⏱️ **Council Timeout**\n\n"
                         "The AI council took too long to respond. This usually means:\n\n"
@@ -597,7 +558,6 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                     })
                     has_sent_final_response = True
                 
-                # ✅ FIX: ALWAYS send completion on timeout
                 if not completion_sent:
                     await safe_send_json(websocket, {
                         "type": "response_complete",
@@ -605,7 +565,7 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                         "status": "timeout"
                     })
                     completion_sent = True
-                return  # Exit after sending completion
+                return  
                 
             except Exception as e:
                 logger.error(f"Council exception: {e}")
@@ -619,7 +579,6 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                     })
                     has_sent_final_response = True
                 
-                # ✅ FIX: ALWAYS send completion on exception
                 if not completion_sent:
                     await safe_send_json(websocket, {
                         "type": "response_complete",
@@ -627,19 +586,16 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                         "status": "error"
                     })
                     completion_sent = True
-                return  # Exit after sending completion
+                return  
             
-            # Check for tool calls
             tool_pattern = r'TOOL\[(\w+)\]\((.*?)\)'
             tool_match = re.search(tool_pattern, full_response)
             
             if tool_match:
-                # TOOL DETECTED - Execute and loop
                 tool_name = tool_match.group(1)
                 args_str = tool_match.group(2).strip()
                 args = [arg.strip().strip('"').strip("'") for arg in args_str.split(',') if arg.strip()]
                 
-                # Loop detection
                 tool_sig = f"{tool_name}({','.join(args[:2])})"
                 if tool_sig in tool_history:
                     logger.warning(f"Loop detected: {tool_sig}")
@@ -649,7 +605,6 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                         agent.memory.add_conversation("assistant", clean_response)
                         has_sent_final_response = True
                     
-                    # ✅ FIX: Send completion on loop detection
                     if not completion_sent:
                         await safe_send_json(websocket, {
                             "type": "response_complete",
@@ -662,7 +617,6 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                 tool_history.append(tool_sig)
                 tool_use_count += 1
                 
-                # Execute tool (don't show to user - internal only)
                 logger.info(f"🔧 Executing {tool_name}...")
                 
                 try:
@@ -680,26 +634,22 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                     logger.error(f"Tool '{tool_name}' failed: {e}")
                     tool_result = f"[ERROR] Tool failed: {e}"
                 
-                # Add to context for next iteration
                 current_context += f"\n\nTool: {tool_name}\nResult: {tool_result[:3000]}"
-                continue  # Loop back to get new response with tool results
+                continue  
             
             else:
-                # NO TOOL - This is the final answer
                 if not has_sent_final_response:
                     clean_response = re.sub(tool_pattern, '', full_response).strip()
                     
                     if not clean_response:
                         clean_response = "✅ Task completed."
                     
-                    # Stream final response to user
                     success = await stream_response(websocket, clean_response)
                     
                     if success:
                         agent.memory.add_conversation("assistant", clean_response)
                         has_sent_final_response = True
                 
-                # ✅ FIX: Send completion signal on success
                 if not completion_sent:
                     await safe_send_json(websocket, {
                         "type": "response_complete",
@@ -707,9 +657,8 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
                         "status": "success"
                     })
                     completion_sent = True
-                break  # Exit loop - we're done
+                break  
         
-        # ✅ FIX: Handle max iterations reached
         if iteration >= max_iterations - 1 and not has_sent_final_response:
             await safe_send_json(websocket, {
                 "type": "response_chunk",
@@ -717,7 +666,6 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
             })
             has_sent_final_response = True
         
-        # ✅ FIX: Always send completion if not sent yet
         if not completion_sent:
             await safe_send_json(websocket, {
                 "type": "response_complete",
@@ -727,7 +675,6 @@ async def stream_with_council(user_message: str, context_str: str, websocket: We
             completion_sent = True
     
     except Exception as e:
-        # ✅ FIX: Catch ANY unhandled exception
         logger.error(f"Unexpected error in stream_with_council: {e}")
         logger.error(traceback.format_exc())
         
@@ -851,7 +798,6 @@ async def startup_event():
     try:
         print(" Initializing Intelligent AI Agent...")
         
-        # FIX: Better error handling
         try:
             agent = UltimateAgent()
         except SystemExit as e:
@@ -869,7 +815,6 @@ async def startup_event():
         mode = "Council Mode" if agent.use_council else "Ollama Mode"
         print(f" [SUCCESS] Agent initialized in {mode}")
         
-        # Start cleanup task
         asyncio.create_task(periodic_cleanup())
         
         print("\n" + "="*70)
@@ -884,10 +829,9 @@ async def startup_event():
 async def periodic_cleanup():
     """Periodic cleanup task"""
     while True:
-        await asyncio.sleep(600)  # Every 10 minutes
+        await asyncio.sleep(600)  
         await manager.cleanup_stale_connections()
         
-        # Cleanup agent memory
         if agent:
             agent.memory.auto_cleanup()
 

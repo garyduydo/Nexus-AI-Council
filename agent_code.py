@@ -38,15 +38,12 @@ from logging.handlers import RotatingFileHandler
 from collections import defaultdict
 
 
-# Try to load environment variables
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
 
-
-# Suppress warnings
 warnings.filterwarnings('ignore')
 
 
@@ -213,7 +210,6 @@ class LazyLoader:
             return cls._instances['voice_engine']
 
 
-# Core imports
 try:
     from langchain_ollama import ChatOllama
 except ImportError:
@@ -227,7 +223,6 @@ except ImportError:
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 
-# Optional caching
 try:
     from diskcache import Cache
     CACHE_AVAILABLE = True
@@ -859,7 +854,6 @@ class MemorySystem:
         self.memory_db = Path(AgentConfig.MEMORY_DIR) / "conversations.db"
         self.db_pool = ConnectionPool(str(self.memory_db), 3)
         
-        # FIXED: Use ThreadPoolExecutor properly
         self.persist_executor = ThreadPoolExecutor(
             max_workers=2,
             thread_name_prefix="memory-persist"
@@ -935,7 +929,6 @@ class MemorySystem:
             if len(self.conversation_history) % 10 == 0:
                 self.auto_cleanup()
         
-        # FIXED: Use executor properly
         if self.persist_executor:
             self.persist_executor.submit(self._persist_sync, timestamp, role, content)
     
@@ -1061,11 +1054,9 @@ class MemorySystem:
     def cleanup(self):
         """Cleanup resources - FIXED"""
         try:
-            # FIXED: Shutdown executor properly
             if self.persist_executor:
                 self.persist_executor.shutdown(wait=True)
             
-            # Close database pool
             self.db_pool.close_all()
             
             logger.info("Memory system cleaned up")
@@ -1300,7 +1291,6 @@ class SystemTools:
             if not command:
                 return f"[ERROR] Unknown application: {app_name}"
             
-            # FIXED: No shell=True
             subprocess.Popen(command, shell=False)
             return f"[SUCCESS] Opened {app_name}"
             
@@ -1334,7 +1324,6 @@ class SystemTools:
             logger.warning(f"Executing: {command}")
             sec_logger.warning(f"Command executed: {command}")
             
-            # FIXED: Execute safely WITHOUT shell=True
             result = subprocess.run(
                 args,
                 shell=False,
@@ -1991,7 +1980,6 @@ class DualCouncilOrchestrator:
         self.primary_cooldown_until = None
         self.using_backup = False
         
-        # Check available providers
         self.has_openrouter = bool(os.getenv('OPENROUTER_API_KEY'))
         self.has_groq = bool(os.getenv('GROQ_API_KEY'))
         self.has_gemini = bool(os.getenv('GOOGLE_API_KEY'))
@@ -2014,7 +2002,6 @@ class DualCouncilOrchestrator:
         backup_chair = os.getenv("BACKUP_CHAIRPERSON_MODEL", "gemini:gemini-2.5-flash")
         self.backup_chairperson = DualCouncilMember(backup_chair, "Backup-Chairperson")
         
-        # Rate limiters
         self.rate_limiters = {
             'openrouter': {'requests': [], 'rpm': 10},
             'groq': {'requests': [], 'rpm': 30, 'daily': 0, 'daily_limit': 14400},
@@ -2024,7 +2011,6 @@ class DualCouncilOrchestrator:
         self.daily_reset = datetime.now()
         self._rate_lock = threading.Lock()
         
-        # Stats with consensus tracking
         self.stats = {
             'primary_calls': 0,
             'backup_calls': 0,
@@ -2108,19 +2094,15 @@ class DualCouncilOrchestrator:
             limiter = self.rate_limiters[provider]
             now = time.time()
             
-            # Reset daily counter
             if datetime.now().date() > self.daily_reset.date():
                 limiter['daily'] = 0
                 self.daily_reset = datetime.now()
             
-            # Check daily limit
             if 'daily_limit' in limiter and limiter['daily'] >= limiter['daily_limit']:
                 return False
             
-            # Clean old requests
             limiter['requests'] = [t for t in limiter['requests'] if t > now - 60]
             
-            # Check per-minute limit
             return len(limiter['requests']) < limiter['rpm']
     
     def _record_call(self, provider: str):
@@ -2148,18 +2130,16 @@ class DualCouncilOrchestrator:
         
         self._record_call(member.provider)
         
-        # ✅ FIX: Set timeout based on provider reliability
         timeout_map = {
-            'openrouter': 30.0,  # Often slow with free tier
-            'groq': 20.0,        # Usually fast
-            'gemini': 25.0,      # Medium speed
-            'ollama': 45.0       # Local, can be slow
+            'openrouter': 30.0,  
+            'groq': 20.0,        
+            'gemini': 25.0,      
+            'ollama': 45.0       
         }
         
         call_timeout = timeout_map.get(member.provider, 30.0)
         
         try:
-            # ✅ FIX: Wrap entire call in timeout
             if member.provider == 'openrouter':
                 result = await asyncio.wait_for(
                     self._call_openrouter(session, member, prompt),
@@ -2190,7 +2170,6 @@ class DualCouncilOrchestrator:
             return result
         
         except asyncio.TimeoutError:
-            # ✅ FIX: Return failure instead of raising
             logger.warning(f"{member.name} timeout ({call_timeout}s)")
             return {
                 "name": member.name,
@@ -2473,7 +2452,6 @@ class DualCouncilOrchestrator:
         3. Separate consensus quality tracking for Primary vs Backup
         """
         
-        # Determine active roles
         active_roles = ["Strategist", "Librarian"]
         query_lower = user_query.lower()
         if any(w in query_lower for w in ["code", "python", "script", "program", "implement"]):
@@ -2510,7 +2488,6 @@ As a {role}, provide your expert analysis. Be specific, detailed, and accurate."
             
             tasks = [self._call_member(session, member, role_prompt) for member in members]
             
-            # Add timeout and retry for unreliable providers
             max_retries = 2 if is_primary else 1
             retry_count = 0
             responses = None
@@ -2535,7 +2512,6 @@ As a {role}, provide your expert analysis. Be specific, detailed, and accurate."
                 logger.warning(f"[X] {council_name} {role}: No responses after retries")
                 continue
             
-            # Filter successful
             valid_responses = []
             for r in responses:
                 if isinstance(r, Exception):
@@ -2559,7 +2535,6 @@ As a {role}, provide your expert analysis. Be specific, detailed, and accurate."
                 logger.info(f"[OK] {council_name} {role} (single expert): Response accepted")
             
             else:
-                # Multiple experts - need consensus (ORIGINAL ALGORITHM)
                 logger.info(f"[~] {council_name} {role} panel: Running internal consensus...")
                 
                 ranking_prompt = f"""You are evaluating {role} expert responses for quality.
@@ -2619,7 +2594,6 @@ Respond ONLY with JSON:
                             significant_gap = int(os.getenv('PRIMARY_ROLE_GAP' if is_primary else 'BACKUP_ROLE_GAP', '50' if is_primary else '40'))
                             
                             if quality_gap > significant_gap:
-                                # Enhancement mode (ORIGINAL)
                                 logger.info(f"[*] {council_name} {role}: Enhancing best response")
                                 
                                 others = [r[0] for r in ranked[1:]]
@@ -2658,7 +2632,6 @@ Provide the ENHANCED {role} perspective:"""
                                     consensus_scores[role] = {'score': best_score, 'method': 'best_only'}
                             
                             else:
-                                # Merge mode (ORIGINAL)
                                 logger.info(f"[~] {council_name} {role}: Merging similar-quality responses")
                                 
                                 top_responses = [r[0] for r in ranked[:min(3, len(ranked))]]
@@ -2754,11 +2727,9 @@ JSON only:
             logger.error(f"[X] {council_name} Council: No role consensus achieved")
             return None
         
-        # Calculate overall consensus quality
         avg_score = sum(s['score'] for s in consensus_scores.values()) / len(consensus_scores) if consensus_scores else 0
         logger.info(f"[OK] {council_name} Phase 1 complete: {len(role_consensus_responses)} roles, avg score: {avg_score:.0f}")
         
-        # Store consensus quality
         if is_primary:
             self.stats['primary_consensus_score'] = avg_score
         else:
@@ -2775,7 +2746,6 @@ JSON only:
             for role, opinion in role_consensus_responses.items()
         ])
         
-        # Check for role disagreements (ORIGINAL)
         if len(role_consensus_responses) >= 2:
             logger.info(f"[?] {council_name}: Analyzing inter-role consensus...")
             
@@ -2852,7 +2822,6 @@ INSTRUCTIONS:
 
 FINAL ANSWER:"""
         
-        # Chairperson with retry for unreliable primary
         final = None
         attempts = 0
         max_attempts = 3 if is_primary else 1
@@ -2887,11 +2856,9 @@ FINAL ANSWER:"""
         try:
             async with aiohttp.ClientSession() as session:
                 
-                # Check if we should skip primary due to cooldown
                 use_backup_immediately = self._should_use_backup()
                 
                 if use_backup_immediately:
-                    # Skip primary - use backup immediately
                     logger.info("[~] PRIMARY IN COOLDOWN - Using BACKUP Council")
                     self.stats['backup_calls'] += 1
                     
@@ -2904,7 +2871,7 @@ FINAL ANSWER:"""
                             context,
                             "Backup"
                         ),
-                        timeout=90.0  # ✅ Shorter timeout for backup
+                        timeout=90.0  
                     )
                     
                     if result:
@@ -2925,7 +2892,6 @@ FINAL ANSWER:"""
                 self.stats['primary_calls'] += 1
                 
                 try:
-                    # ✅ FIX: Add timeout to primary attempt
                     primary_result = await asyncio.wait_for(
                         self._convene_council(
                             session,
@@ -2935,10 +2901,9 @@ FINAL ANSWER:"""
                             context,
                             "Primary"
                         ),
-                        timeout=60.0  # ✅ 60s timeout for primary (was hanging at 120s)
+                        timeout=60.0 
                     )
                 except asyncio.TimeoutError:
-                    # ✅ FIX: Timeout = immediate fallback
                     logger.error("[X] Primary Council TIMEOUT (60s)")
                     primary_result = None
                     self.primary_failures += 1
@@ -2949,9 +2914,8 @@ FINAL ANSWER:"""
                 # ============================================================
                 
                 if not primary_result:
-                    # PRIMARY FAILED - FALLBACK TO BACKUP
                     logger.error("[X] Primary Council failed")
-                    if self.primary_failures == 0:  # Wasn't already counted
+                    if self.primary_failures == 0:  
                         self.primary_failures += 1
                         self.stats['primary_failures'] += 1
                     self.stats['total_fallbacks'] += 1
@@ -2968,7 +2932,7 @@ FINAL ANSWER:"""
                                 context,
                                 "Backup"
                             ),
-                            timeout=90.0  # ✅ Backup timeout
+                            timeout=90.0 
                         )
                     except asyncio.TimeoutError:
                         logger.error("[X] Backup Council also timed out")
@@ -2992,7 +2956,6 @@ FINAL ANSWER:"""
                 primary_score = self.stats.get('primary_consensus_score', 0)
                 logger.info(f"[OK] Primary Council succeeded (consensus: {primary_score:.0f})")
                 
-                # Quality-based fallback (optional)
                 enable_quality_fallback = os.getenv('ENABLE_QUALITY_FALLBACK', 'false').lower() == 'true'
                 
                 if enable_quality_fallback:
@@ -3047,7 +3010,6 @@ FINAL ANSWER:"""
                             else:
                                 logger.info(f"[OK] Using Primary (backup not significantly better)")
                 
-                # Use Primary result
                 self.primary_failures = 0
                 
                 if os.getenv('SHOW_COUNCIL_MODE', 'true').lower() == 'true':
@@ -3060,7 +3022,6 @@ FINAL ANSWER:"""
             import traceback
             traceback.print_exc()
             
-            # ✅ FIX: Last resort backup with timeout
             try:
                 logger.warning("[~] Exception fallback - trying Backup Council...")
                 async with aiohttp.ClientSession() as session:
@@ -3073,7 +3034,7 @@ FINAL ANSWER:"""
                             context,
                             "Backup"
                         ),
-                        timeout=60.0  # ✅ Emergency timeout
+                        timeout=60.0  
                     )
                     if result:
                         return f"[BACKUP - Emergency fallback] {result}"
@@ -3114,7 +3075,6 @@ FINAL ANSWER:"""
                 lines.append(f"PRIMARY COOLDOWN: {int(remaining)}s remaining")
                 lines.append("")
         
-        # ORIGINAL: Quality assessment
         primary_score = self.stats.get('primary_consensus_score', 0)
         backup_score = self.stats.get('backup_consensus_score', 0)
         
@@ -3155,7 +3115,6 @@ class UltimateAgent:
         self.voice = VoiceInterface()
         self.autonomous_mode = False
         
-        # FIXED: Check council setup properly
         if validate_council_setup():
             try:
                 self.orchestrator = DualCouncilOrchestrator()
@@ -3277,7 +3236,6 @@ Think step by step and use tools when appropriate."""
             
             self.memory.add_conversation("user", user_input)
             
-            # Build context
             context_msgs = self.memory.get_recent_context(8)
             context_str = "\n".join([
                 f"{msg['role']}: {msg['content']}" 
@@ -3286,10 +3244,8 @@ Think step by step and use tools when appropriate."""
             
             print("[COUNCIL] Consulting expert panels...", flush=True)
             
-            # Use Council
             response = await self.orchestrator.convene(user_input, context_str)
             
-            # Check for tool calls in response
             tool_pattern = r'TOOL\[(\w+)\]\((.*?)\)'
             max_iterations = 5
             iteration = 0
@@ -3300,7 +3256,6 @@ Think step by step and use tools when appropriate."""
                 if not tool_match:
                     break
                 
-                # Execute tool
                 tool_name = tool_match.group(1)
                 args_str = tool_match.group(2).strip()
                 args = [arg.strip().strip('"').strip("'") 
@@ -3309,23 +3264,18 @@ Think step by step and use tools when appropriate."""
                 print(f"[TOOL] Using: {tool_name}", flush=True)
                 tool_result = self.tools.execute_tool(tool_name, args)
                 
-                # Add tool result to context
                 context_str += f"\n\nTool: {tool_name}\nResult: {tool_result[:1000]}"
                 
-                # Get new response with tool result
                 response = await self.orchestrator.convene(user_input, context_str)
                 iteration += 1
             
-            # Clean response
             clean_response = re.sub(tool_pattern, '', response).strip()
             
             if not clean_response:
                 clean_response = "[OK] Task completed successfully."
             
-            # Add to conversation
             self.memory.add_conversation("assistant", clean_response)
             
-            # Voice output
             if use_voice:
                 self.voice.speak(clean_response)
             
@@ -3340,11 +3290,9 @@ Think step by step and use tools when appropriate."""
         """FIXED: Execute user request - supports both Council and Ollama modes"""
         
         if self.use_council:
-            # Use async Council mode
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    # We're already in an event loop (shouldn't happen in CLI)
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
             except RuntimeError:
@@ -3359,7 +3307,6 @@ Think step by step and use tools when appropriate."""
                 logger.error(f"Council execution error: {e}")
                 return f"[X] Council error: {str(e)}"
         else:
-            # Use original Ollama mode
             return self._execute_with_ollama(user_input, use_voice)
     
     def _execute_with_ollama(self, user_input: str, use_voice: bool = False) -> str:
