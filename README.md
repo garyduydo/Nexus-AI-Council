@@ -183,7 +183,6 @@ Nexus AI will be a standalone application accessible via a web interface, design
 * **Deployment & Final Handover (Jan 19 – Jan 20)**
     * Finalizing technical documentation, API references, and `README.md`.
     * Optimizing `Dockerfile` layers and `docker-compose.yml` for production-grade deployment.
-    * **Project Launch Date: January 20, 2026.**
 
 ---
 
@@ -196,7 +195,7 @@ Nexus AI will be a standalone application accessible via a web interface, design
 | **Alpha Release** | Dec 14, 2025 | Functional Backend & Tools | Completed |
 | **Beta Release** | Jan 04, 2026 | Integrated UI & Memory | Completed |
 | **Security Audit** | Jan 15, 2026 | Pentest & Logic Validation | Completed |
-| **Official Launch** | **Jan 20, 2026** | **Nexus AI v1.0 Production** | **DEPLOYED** |
+| **Official Launch** | **UNKNOWN** | **Nexus AI v1.0 Production** | **UNKNOWN** |
 
 **Ongoing (Post-Launch):**
 *   **Continuous Improvement:** Monitoring, gathering user feedback, and planning for future iterations and new features (e.g., those initially out of scope).
@@ -215,7 +214,7 @@ Nexus AI will be a standalone application accessible via a web interface, design
     cd nexus-ai
     ```
 
-2.  **Create a `.env` file (optional but recommended):**
+2.  **Create a `.env` file (recommended):**
     Create a file named `.env` in the root directory of the project and add your API keys (if using external models):
     ```
     OPENROUTER_API_KEY="your_openrouter_api_key"
