@@ -7,6 +7,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Requ
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import logging
@@ -840,24 +842,21 @@ async def shutdown_event():
     if agent:
         agent.cleanup()
 
+build_path = "frontend/build" 
+
+app.mount("/static", StaticFiles(directory=f"{build_path}/static"), name="static")
+
 @app.get("/")
-async def root():
-    mode = "Council (Multi-Model AI)" if agent.use_council else "Ollama (Local AI)"
-    model_info = "Multiple Expert Panels" if agent.use_council else AgentConfig.MODEL
-    
-    return {
-        "status": "online",
-        "message": "Intelligent AI Agent API v7.0",
-        "mode": mode,
-        "model": model_info,
-        "features": [
-            "Smart web search with multi-source synthesis",
-            "Automatic tool usage decision making",
-            "Real-time streaming responses",
-            "Natural conversation flow",
-            f"Backend: {mode}"
-        ]
-    }
+async def serve_react_app():
+    index_file = os.path.join(build_path, "index.html")
+    return FileResponse(index_file)
+
+@app.get("/{catchall:path}")
+async def catch_all(catchall: str):
+    index_file = os.path.join(build_path, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+    return {"status": "online", "message": "Nexus API is running, but UI not found"}
 
 @app.get("/health")
 async def health_check():
