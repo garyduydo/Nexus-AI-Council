@@ -323,7 +323,7 @@ PRODUCTION DEPLOYMENT:
 ======================
 
 1. USE HTTPS:
-   - Get SSL cert (Let's Encrypt)
+   - Get SSL cert (Lets Encrypt)
    - Configure nginx with SSL
    - Update docker-compose ports
 
