@@ -10,6 +10,17 @@ import {
 const DEFAULT_API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 const DEFAULT_WS_URL = process.env.REACT_APP_WS_URL || 'ws://localhost:8000/ws';
 
+export const getWebSocketUrl = () => {
+  const isProduction = window.location.hostname !== 'localhost';
+  
+  if (isProduction) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/ws`;
+  } else {
+    return 'ws://localhost:8000/ws';
+  }
+};
+
 /* ========================================================================== */
 /* DYNAMIC THEMES                                                             */
 /* ========================================================================== */

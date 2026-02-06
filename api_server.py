@@ -62,6 +62,85 @@ app = FastAPI(
 
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """FIXED: WebSocket with better Render compatibility"""
+    await manager.connect(websocket)
+    
+    try:
+        while True:
+            # Check if connection is still alive
+            if websocket.client_state != WebSocketState.CONNECTED:
+                logger.warning("WebSocket not connected, breaking")
+                break
+            
+            try:
+                # Set a reasonable timeout
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=300.0  # 5 minutes
+                )
+            except asyncio.TimeoutError:
+                # Send a ping to keep connection alive
+                try:
+                    await websocket.send_json({"type": "ping"})
+                    continue
+                except:
+                    break
+            
+            if not data:
+                continue
+            
+            try:
+                message = json.loads(data)
+            except json.JSONDecodeError:
+                await websocket.send_json({
+                    "type": "error",
+                    "content": "Invalid JSON"
+                })
+                continue
+            
+            message_text = message.get("message", "").strip()
+            
+            if not message_text:
+                await websocket.send_json({
+                    "type": "error", 
+                    "content": "Empty message"
+                })
+                continue
+            
+            # Send acknowledgment
+            await websocket.send_json({
+                "type": "status",
+                "content": "Processing..."
+            })
+            
+            # Process with council or ollama
+            if agent.use_council:
+                await process_with_council(
+                    message_text,
+                    websocket
+                )
+            else:
+                await process_with_ollama(
+                    message_text,
+                    websocket
+                )
+    
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected normally")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "content": f"Error: {str(e)}"
+            })
+        except:
+            pass
+    finally:
+        await manager.disconnect(websocket)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
