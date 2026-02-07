@@ -1020,6 +1020,20 @@ async def clear_conversation():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/council/keys")
+async def get_key_stats():
+    """Get API key rotation statistics"""
+    if not agent or not agent.use_council:
+        return {"error": "Council mode not active"}
+    
+    return {
+        "openrouter": agent.orchestrator.key_pools['openrouter'].get_stats(),
+        "groq": agent.orchestrator.key_pools['groq'].get_stats(),
+        "gemini": agent.orchestrator.key_pools['gemini'].get_stats(),
+        "strategy": os.getenv('KEY_ROTATION_STRATEGY', 'least_used'),
+        "total_rotations": agent.orchestrator.stats.get('key_rotations', 0)
+    }
+
 @app.get("/export")
 async def export_conversation():
     try:

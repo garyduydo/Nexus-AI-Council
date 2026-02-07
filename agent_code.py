@@ -28,6 +28,7 @@ import atexit
 import warnings
 import hashlib
 import aiohttp
+import random
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Callable, Tuple, Union
@@ -1948,7 +1949,115 @@ def validate_environment():
 # FIXED DUAL COUNCIL ORCHESTRATOR
 # ================================================================================
 
-
+class APIKeyPool:
+    """Manages multiple API keys for the same provider"""
+    
+    def __init__(self, provider: str):
+        self.provider = provider
+        self.keys = []
+        self.current_index = 0
+        self.key_stats = {} 
+        self._load_keys()
+    
+    def _load_keys(self):
+        """Load all API keys for this provider from environment"""
+        env_prefix = {
+            'openrouter': 'OPENROUTER_API_KEY',
+            'groq': 'GROQ_API_KEY',
+            'gemini': 'GOOGLE_API_KEY'
+        }.get(self.provider)
+        
+        if not env_prefix:
+            return
+        
+        single_key = os.getenv(env_prefix)
+        if single_key:
+            self.keys.append({
+                'key': single_key,
+                'name': f"{self.provider}_default",
+                'requests': [],
+                'daily': 0,
+                'failures': 0
+            })
+        
+        index = 1
+        while True:
+            key = os.getenv(f"{env_prefix}_{index}")
+            if not key:
+                break
+            
+            self.keys.append({
+                'key': key,
+                'name': f"{self.provider}_{index}",
+                'requests': [],
+                'daily': 0,
+                'failures': 0
+            })
+            index += 1
+        
+        if self.keys:
+            logger.info(f"✓ Loaded {len(self.keys)} API key(s) for {self.provider}")
+        else:
+            logger.warning(f"⚠ No API keys found for {self.provider}")
+    
+    def get_key(self, strategy: str = 'round_robin') -> Optional[Dict]:
+        """Get next API key using specified strategy"""
+        if not self.keys:
+            return None
+        
+        if len(self.keys) == 1:
+            return self.keys[0]
+        
+        if strategy == 'round_robin':
+            self.current_index = (self.current_index + 1) % len(self.keys)
+            return self.keys[self.current_index]
+        
+        elif strategy == 'least_used':
+            now = time.time()
+            minute_ago = now - 60
+            
+            for key_info in self.keys:
+                key_info['requests'] = [t for t in key_info['requests'] if t > minute_ago]
+            
+            return min(self.keys, key=lambda k: len(k['requests']))
+        
+        elif strategy == 'random':
+            return random.choice(self.keys)
+        
+        elif strategy == 'healthiest':
+            available_keys = [k for k in self.keys if k['failures'] < 3]
+            if not available_keys:
+                for k in self.keys:
+                    k['failures'] = 0
+                available_keys = self.keys
+            
+            return min(available_keys, key=lambda k: k['failures'])
+    
+    def record_success(self, key_info: Dict):
+        """Record successful request"""
+        key_info['requests'].append(time.time())
+        key_info['daily'] += 1
+        if key_info['failures'] > 0:
+            key_info['failures'] = max(0, key_info['failures'] - 1)
+    
+    def record_failure(self, key_info: Dict):
+        """Record failed request"""
+        key_info['failures'] += 1
+        if key_info['failures'] >= 3:
+            logger.warning(f"Key {key_info['name']} has {key_info['failures']} failures")
+    
+    def get_stats(self) -> Dict:
+        """Get statistics for all keys"""
+        return {
+            'provider': self.provider,
+            'total_keys': len(self.keys),
+            'keys': [{
+                'name': k['name'],
+                'requests_last_min': len([r for r in k['requests'] if r > time.time() - 60]),
+                'daily_requests': k['daily'],
+                'failures': k['failures']
+            } for k in self.keys]
+        }
 class DualCouncilMember:
     """Council member supporting multiple providers"""
     
@@ -1970,9 +2079,7 @@ class DualCouncilMember:
 
 class DualCouncilOrchestrator:
     """
-    FIXED VERSION: Manages two councils with internal consensus
-    - Primary: OpenRouter free models
-    - Backup: Groq + Gemini + Ollama
+    ENHANCED VERSION with multi-account API key rotation
     """
     
     def __init__(self):
@@ -1980,17 +2087,23 @@ class DualCouncilOrchestrator:
         self.primary_cooldown_until = None
         self.using_backup = False
         
-        self.has_openrouter = bool(os.getenv('OPENROUTER_API_KEY'))
-        self.has_groq = bool(os.getenv('GROQ_API_KEY'))
-        self.has_gemini = bool(os.getenv('GOOGLE_API_KEY'))
+        self.key_pools = {
+            'openrouter': APIKeyPool('openrouter'),
+            'groq': APIKeyPool('groq'),
+            'gemini': APIKeyPool('gemini')
+        }
+        
+        self.has_openrouter = len(self.key_pools['openrouter'].keys) > 0
+        self.has_groq = len(self.key_pools['groq'].keys) > 0
+        self.has_gemini = len(self.key_pools['gemini'].keys) > 0
         self.has_ollama = self._check_ollama()
         
         self.backup_available = (self.has_groq or self.has_gemini or self.has_ollama)
         
-        logger.info(f"Primary Council (OpenRouter): {self.has_openrouter}")
+        logger.info(f"Primary Council (OpenRouter): {self.has_openrouter} ({len(self.key_pools['openrouter'].keys)} keys)")
         logger.info(f"Backup Council Available: {self.backup_available}")
-        logger.info(f"  - Groq: {self.has_groq}")
-        logger.info(f"  - Gemini: {self.has_gemini}")
+        logger.info(f"  - Groq: {self.has_groq} ({len(self.key_pools['groq'].keys)} keys)")
+        logger.info(f"  - Gemini: {self.has_gemini} ({len(self.key_pools['gemini'].keys)} keys)")
         logger.info(f"  - Ollama: {self.has_ollama}")
         
         self.primary_panels = self._recruit_council('PANEL_')
@@ -2003,11 +2116,9 @@ class DualCouncilOrchestrator:
         self.backup_chairperson = DualCouncilMember(backup_chair, "Backup-Chairperson")
         
         self.rate_limiters = {
-            'openrouter': {'requests': [], 'rpm': 10},
-            'groq': {'requests': [], 'rpm': 30, 'daily': 0, 'daily_limit': 14400},
-            'gemini': {'requests': [], 'rpm': 15, 'daily': 0, 'daily_limit': 1500},
             'ollama': {'requests': [], 'rpm': 999}
         }
+        
         self.daily_reset = datetime.now()
         self._rate_lock = threading.Lock()
         
@@ -2022,19 +2133,43 @@ class DualCouncilOrchestrator:
             'primary_has_disagreement': False,
             'primary_disagreement_severity': 'low',
             'quality_checks': 0,
-            'quality_fallbacks': 0
+            'quality_fallbacks': 0,
+            'key_rotations': 0
         }
     
+    def _get_api_key(self, provider: str) -> Optional[str]:
+        """Get API key for provider using rotation strategy"""
+        if provider not in self.key_pools:
+            return None
+        
+        strategy = os.getenv('KEY_ROTATION_STRATEGY', 'least_used')
+        
+        key_info = self.key_pools[provider].get_key(strategy)
+        
+        if key_info:
+            self.stats['key_rotations'] += 1
+            return key_info
+        
+        return None
+    
     def _check_ollama(self) -> bool:
-        """Check if Ollama is available"""
+        """Check if Ollama is available - supports remote URLs and graceful failure"""
+        ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
+        
         try:
-            response = requests.get("http://localhost:11434/api/tags", timeout=2)
-            return response.status_code == 200
-        except:
+            response = requests.get(f"{ollama_url}/api/tags", timeout=3)
+            if response.status_code == 200:
+                logger.info(f"✓ Ollama available at: {ollama_url}")
+                return True
+            else:
+                logger.info(f"○ Ollama not available (status {response.status_code})")
+                return False
+        except Exception as e:
+            logger.info(f"○ Ollama not available at {ollama_url} (offline or not tunneled)")
             return False
     
     def _recruit_council(self, prefix: str) -> Dict[str, List[DualCouncilMember]]:
-        """Recruit a council (primary or backup)"""
+        """Recruit a council (primary or backup) - filters Ollama if offline"""
         panels = defaultdict(list)
         
         role_vars = {
@@ -2052,12 +2187,18 @@ class DualCouncilOrchestrator:
                 for member_spec in members_config:
                     try:
                         member = DualCouncilMember(member_spec, role)
+                        
+                        if member.provider == 'ollama' and not self.has_ollama:
+                            logger.info(f"○ Skipping {member.name} (Ollama offline)")
+                            continue
+                        
                         panels[role].append(member)
                     except Exception as e:
                         logger.error(f"Failed to create member from {member_spec}: {e}")
         
         council_type = "Primary" if prefix == "PANEL_" else "Backup"
-        logger.info(f"{council_type} Council: {sum(len(p) for p in panels.values())} members")
+        total_members = sum(len(p) for p in panels.values())
+        logger.info(f"{council_type} Council: {total_members} members recruited")
         
         return panels
     
@@ -2191,11 +2332,13 @@ class DualCouncilOrchestrator:
         member: DualCouncilMember,
         prompt: str
     ) -> Dict:
-        """FIXED: Call OpenRouter API with proper retry"""
-        api_key = os.getenv('OPENROUTER_API_KEY')
+        """UPDATED: Call OpenRouter with key rotation"""
         
-        if not api_key:
-            raise Exception("OPENROUTER_API_KEY not set")
+        key_info = self._get_api_key('openrouter')
+        if not key_info:
+            raise Exception("No OpenRouter API key available")
+        
+        api_key = key_info['key']
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -2223,24 +2366,31 @@ class DualCouncilOrchestrator:
                     response_text = await response.text()
                     
                     if response.status == 429:
+                        self.key_pools['openrouter'].record_failure(key_info)
                         if attempt < 2:
                             wait_time = (attempt + 1) * 2
-                            logger.warning(f"Rate limit hit. Retrying in {wait_time}s...")
+                            logger.warning(f"Rate limit on {key_info['name']}. Retrying in {wait_time}s...")
                             await asyncio.sleep(wait_time)
                             continue
                         raise Exception("Rate limited after retries")
                     
                     if response.status == 402:
+                        self.key_pools['openrouter'].record_failure(key_info)
                         raise Exception("Credits required")
                     
                     if response.status != 200:
                         logger.error(f"OpenRouter error: {response_text[:200]}")
+                        self.key_pools['openrouter'].record_failure(key_info)
                         raise Exception(f"HTTP {response.status}")
                     
                     data = json.loads(response_text)
                     
                     if 'error' in data:
+                        self.key_pools['openrouter'].record_failure(key_info)
                         raise Exception(data['error'].get('message', 'Unknown error'))
+                    
+                    # Success!
+                    self.key_pools['openrouter'].record_success(key_info)
                     
                     return {
                         "name": member.name,
@@ -2253,6 +2403,7 @@ class DualCouncilOrchestrator:
                     logger.warning(f"Timeout on attempt {attempt + 1}, retrying...")
                     await asyncio.sleep(1)
                     continue
+                self.key_pools['openrouter'].record_failure(key_info)
                 raise Exception("Request timeout after retries")
             except Exception as e:
                 last_error = e
@@ -2269,11 +2420,13 @@ class DualCouncilOrchestrator:
         member: DualCouncilMember,
         prompt: str
     ) -> Dict:
-        """Call Groq API"""
-        api_key = os.getenv('GROQ_API_KEY')
+        """UPDATED: Call Groq with key rotation"""
         
-        if not api_key:
-            raise Exception("GROQ_API_KEY not set")
+        key_info = self._get_api_key('groq')
+        if not key_info:
+            raise Exception("No Groq API key available")
+        
+        api_key = key_info['key']
         
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -2309,22 +2462,28 @@ class DualCouncilOrchestrator:
                 response_text = await response.text()
                 
                 if response.status == 429:
+                    self.key_pools['groq'].record_failure(key_info)
                     raise Exception("Rate limited")
                 
                 if response.status != 200:
                     logger.error(f"Groq error: {response_text[:200]}")
+                    self.key_pools['groq'].record_failure(key_info)
                     raise Exception(f"HTTP {response.status}")
                 
                 data = json.loads(response_text)
                 
                 if 'error' in data:
+                    self.key_pools['groq'].record_failure(key_info)
                     raise Exception(data['error'].get('message', 'Unknown error'))
+                
+                self.key_pools['groq'].record_success(key_info)
                 
                 return {
                     "name": member.name,
                     "text": data['choices'][0]['message']['content']
                 }
         except asyncio.TimeoutError:
+            self.key_pools['groq'].record_failure(key_info)
             raise Exception("Request timeout")
     
     async def _call_gemini(
@@ -2333,11 +2492,13 @@ class DualCouncilOrchestrator:
         member: DualCouncilMember,
         prompt: str
     ) -> Dict:
-        """FIXED: Call Google Gemini API"""
-        api_key = os.getenv('GOOGLE_API_KEY')
+        """UPDATED: Call Gemini with key rotation"""
         
-        if not api_key:
-            raise Exception("GOOGLE_API_KEY not set")
+        key_info = self._get_api_key('gemini')
+        if not key_info:
+            raise Exception("No Gemini API key available")
+        
+        api_key = key_info['key']
         
         model_name = member.model
         
@@ -2381,24 +2542,29 @@ class DualCouncilOrchestrator:
                     response_text = await response.text()
                     
                     if response.status == 429:
+                        self.key_pools['gemini'].record_failure(key_info)
                         if attempt < 2:
                             wait_time = (attempt + 1) * 3
-                            logger.warning(f"Gemini rate limit, retrying in {wait_time}s...")
+                            logger.warning(f"Gemini rate limit on {key_info['name']}, retrying in {wait_time}s...")
                             await asyncio.sleep(wait_time)
                             continue
                         raise Exception("Rate limited")
                     
                     if response.status != 200:
                         logger.error(f"Gemini error {response.status}: {response_text[:500]}")
+                        self.key_pools['gemini'].record_failure(key_info)
                         raise Exception(f"HTTP {response.status}")
                     
                     data = json.loads(response_text)
                     
                     if 'error' in data:
                         error_msg = data['error'].get('message', 'Unknown error')
+                        self.key_pools['gemini'].record_failure(key_info)
                         raise Exception(error_msg)
                     
                     if 'candidates' in data and data['candidates']:
+                        self.key_pools['gemini'].record_success(key_info)
+                        
                         text = data['candidates'][0]['content']['parts'][0]['text']
                         return {"name": member.name, "text": text}
                     else:
@@ -2409,6 +2575,7 @@ class DualCouncilOrchestrator:
                 if attempt < 2:
                     await asyncio.sleep(1)
                     continue
+                self.key_pools['gemini'].record_failure(key_info)
                 raise last_error
             except Exception as e:
                 last_error = e
@@ -2420,21 +2587,32 @@ class DualCouncilOrchestrator:
         raise Exception(f"All retries failed: {last_error}")
     
     async def _call_ollama(self, member: DualCouncilMember, prompt: str) -> Dict:
-        """Call local Ollama"""
+        """Call Ollama - supports both local and remote URLs with better error handling"""
         loop = asyncio.get_event_loop()
         
-        def _sync_call():
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json={"model": member.model, "prompt": prompt, "stream": False},
-                timeout=60
-            )
-            if response.status_code != 200:
-                raise Exception(f"Ollama error: {response.status_code}")
-            return response.json()['response']
+        ollama_url = os.getenv('OLLAMA_URL', 'http://localhost:11434')
         
-        text = await loop.run_in_executor(None, _sync_call)
-        return {"name": member.name, "text": text}
+        def _sync_call():
+            try:
+                response = requests.post(
+                    f"{ollama_url}/api/generate",
+                    json={"model": member.model, "prompt": prompt, "stream": False},
+                    timeout=45
+                )
+                if response.status_code != 200:
+                    raise Exception(f"HTTP {response.status_code}")
+                return response.json()['response']
+            except requests.exceptions.ConnectionError:
+                raise Exception("Ollama offline or not tunneled")
+            except requests.exceptions.Timeout:
+                raise Exception("Ollama timeout")
+        
+        try:
+            text = await loop.run_in_executor(None, _sync_call)
+            return {"name": member.name, "text": text}
+        except Exception as e:
+            logger.warning(f"Ollama member {member.name} unavailable: {e}")
+            raise
     
     async def _convene_council(
         self,
@@ -3577,7 +3755,6 @@ Voice Mode: {'Enabled' if self.voice_mode else 'Disabled'}
             except Exception as e:
                 logger.error(f"Shell error: {e}")
                 print(f"\n[X] Error: {e}")
-
 
 # ================================================================================
 # MAIN ENTRY POINT
